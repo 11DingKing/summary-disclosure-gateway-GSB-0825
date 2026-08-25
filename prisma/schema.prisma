@@ -63,8 +63,8 @@ model Publication {
 model IdempotencyRecord {
   key         String   @id
   requestHash String
+  status      String   @default("PENDING")
   statusCode  Int
   body        String
   createdAt   DateTime @default(now())
-
 }

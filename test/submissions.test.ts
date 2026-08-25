@@ -238,6 +238,103 @@ test('creation endpoints support idempotency keys and detect key reuse', async (
   assert.equal(list.body.items.length, 1);
 });
 
+test('concurrent identical requests with one Idempotency-Key create at most one submission', async () => {
+  const payload = {
+    kind: 'READER_NOTE',
+    docKey: 'doc-race-same',
+    body: 'concurrent identical idempotent note',
+  };
+  const key = 'race-key-same';
+
+  const responses = await Promise.all(
+    Array.from({ length: 12 }, () =>
+      api(ctx.app, 'POST', '/v1/submissions', payload, { 'Idempotency-Key': key }),
+    ),
+  );
+
+  for (const res of responses) {
+    assert.equal(res.status, 201);
+  }
+  const createdIds = new Set(responses.map((res) => res.body.id));
+  assert.equal(createdIds.size, 1, 'all concurrent callers must observe the same submission id');
+  assert.equal(
+    responses.filter((res) => res.headers['idempotency-replayed'] === 'false').length,
+    1,
+    'exactly one request executes the creation',
+  );
+  assert.equal(
+    responses.filter((res) => res.headers['idempotency-replayed'] === 'true').length,
+    11,
+  );
+
+  const rows = await ctx.db.submission.findMany({ where: { docKey: 'doc-race-same' } });
+  assert.equal(rows.length, 1, 'the race must not leave duplicate submissions behind');
+  assert.equal(rows[0].id, [...createdIds][0]);
+
+  const record = await ctx.db.idempotencyRecord.findUnique({
+    where: { key: `POST /v1/submissions:${key}` },
+  });
+  assert.ok(record);
+  assert.equal(record.status, 'COMPLETED');
+  assert.equal(record.statusCode, 201);
+});
+
+test('concurrent conflicting requests with one Idempotency-Key yield one creation and 409 reuses', async () => {
+  const key = 'race-key-reuse';
+  const responses = await Promise.all(
+    Array.from({ length: 6 }, (_, i) =>
+      api(
+        ctx.app,
+        'POST',
+        '/v1/submissions',
+        {
+          kind: 'READER_NOTE',
+          docKey: 'doc-race-reuse',
+          body: `concurrent conflicting note number ${i}`,
+        },
+        { 'Idempotency-Key': key },
+      ),
+    ),
+  );
+
+  const created = responses.filter((res) => res.status === 201);
+  const rejected = responses.filter((res) => res.status === 409);
+  assert.equal(created.length, 1, 'exactly one payload may win the key');
+  assert.equal(rejected.length, 5);
+  for (const res of rejected) {
+    assert.equal(res.body.error.code, 'IDEMPOTENCY_KEY_REUSE');
+  }
+
+  const rows = await ctx.db.submission.findMany({ where: { docKey: 'doc-race-reuse' } });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, created[0].body.id);
+});
+
+test('a failed reserved request releases the key for a later retry', async () => {
+  const key = 'race-key-failed';
+  const invalid = await api(
+    ctx.app,
+    'POST',
+    '/v1/submissions',
+    { kind: 'READER_NOTE', docKey: 'doc-race-fail', body: '' },
+    { 'Idempotency-Key': key },
+  );
+  assert.equal(invalid.status, 400);
+
+  const retry = await api(
+    ctx.app,
+    'POST',
+    '/v1/submissions',
+    { kind: 'READER_NOTE', docKey: 'doc-race-fail', body: 'retried after validation failure' },
+    { 'Idempotency-Key': key },
+  );
+  assert.equal(retry.status, 201);
+  assert.equal(retry.headers['idempotency-replayed'], 'false');
+
+  const rows = await ctx.db.submission.findMany({ where: { docKey: 'doc-race-fail' } });
+  assert.equal(rows.length, 1);
+});
+
 test('list endpoints use stable cursor pagination over (createdAt,id)', async () => {
   for (let i = 0; i < 5; i += 1) {
     const res = await api(ctx.app, 'POST', '/v1/submissions', {

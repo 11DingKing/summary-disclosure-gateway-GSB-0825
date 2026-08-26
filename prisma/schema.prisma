@@ -1,0 +1,55 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// SQLite has no native enum; `kind` is validated at the application layer:
+// SOURCE_EXCERPT | READER_NOTE | EDITOR_SUMMARY | AI_SUMMARY
+model Block {
+  id                  String   @id @default(cuid())
+  kind                String
+  text                String
+  // SOURCE_EXCERPT-only provenance
+  version             String?
+  pageNumber          Int?
+  // AI_SUMMARY-only provenance
+  modelProvider       String?
+  modelName           String?
+  generatedAt         DateTime?
+  inputSourceBlockIds String? // JSON array of block ids (SQLite: no Json type)
+  citations           String? // JSON array of CitationSpan
+  coveragePermille    Int? // server-computed, never client-supplied
+  contentHash         String // sha256 hex of text
+  idempotencyKey      String?  @unique
+  requestHash         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([createdAt, id])
+  @@index([kind, createdAt, id])
+}
+
+model Publication {
+  id              String   @id @default(cuid())
+  summaryBlockId  String
+  policyVersion   String
+  revision        Int
+  coveragePermille Int
+  snapshot        String // immutable JSON snapshot, never rewritten
+  idempotencyKey  String?  @unique
+  requestHash     String?
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt, id])
+}
+
+// Global monotonically increasing revision; every mutation bumps it.
+// Publish uses it for optimistic concurrency (expectedRevision).
+model GatewayState {
+  id       Int @id @default(1)
+  revision Int @default(0)
+}

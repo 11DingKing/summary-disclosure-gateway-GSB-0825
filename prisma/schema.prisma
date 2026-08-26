@@ -1,0 +1,94 @@
+// Prisma schema for the Summary Disclosure Gateway.
+//
+// SQLite is used so the whole gateway runs from an empty directory with no
+// external services. All money-path invariants (server-computed coverage,
+// immutable publication snapshots, per-scope revisions, idempotency) are
+// enforced in application code on top of these tables.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// A single content block of one of the four strictly-separated kinds:
+/// SOURCE_EXCERPT | READER_NOTE | EDITOR_SUMMARY | AI_SUMMARY.
+model Submission {
+  id     String @id @default(cuid())
+  kind   String
+  body   String
+  docKey String?
+
+  // SOURCE_EXCERPT-only columns.
+  version        String?
+  pageStart      Int?
+  pageEnd        Int?
+  contentHash    String?
+  sourceRevision Int     @default(1)
+
+  // AI_SUMMARY-only columns.
+  modelProvider    String?
+  modelName        String?
+  generatedAt      DateTime?
+  inputBlockIds    String? // JSON-encoded string[] of source block ids
+  coveragePermille Int? // last server-computed value; recomputed live on read
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  citations Citation[]
+
+  @@index([kind, createdAt, id])
+  @@index([docKey, createdAt, id])
+  @@index([createdAt, id])
+}
+
+/// A CitationSpan binding a span of an AI summary's output to a source block.
+/// Offsets are Unicode code points. sourceContentHash pins the source block's
+/// hash at creation time so later source revisions invalidate stale citations.
+model Citation {
+  id                String  @id @default(cuid())
+  submissionId      String
+  sourceBlockId     String
+  sourceContentHash String
+  outputStart       Int
+  outputEnd         Int
+  sourceStart       Int?
+  sourceEnd         Int?
+  ordinal           Int
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+  @@index([sourceBlockId])
+}
+
+/// An immutable, policy-gated publication snapshot. The snapshot column holds a
+/// self-contained JSON copy of everything published; later source-block changes
+/// never rewrite it. Revisions are unique and monotonic per scope.
+model Publication {
+  id            String   @id @default(cuid())
+  scope         String
+  revision      Int
+  policyVersion String
+  snapshot      String
+  createdAt     DateTime @default(now())
+
+  @@unique([scope, revision])
+  @@index([scope, createdAt, id])
+  @@index([createdAt, id])
+}
+
+/// Idempotency reservations for all creation endpoints. The primary-key
+/// constraint on `key` guarantees exactly-once execution under concurrency.
+model IdempotencyRecord {
+  key         String   @id
+  requestHash String
+  status      String   @default("PENDING")
+  statusCode  Int
+  body        String
+  createdAt   DateTime @default(now())
+}

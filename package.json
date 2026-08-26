@@ -1,0 +1,36 @@
+{
+  "name": "summary-disclosure-gateway",
+  "version": "1.0.0",
+  "description": "A source-disclosure gateway that keeps original excerpts, reader notes, editor summaries and AI summaries strictly apart, and gates publication behind a server-computed citation-coverage policy.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
+  "scripts": {
+    "postinstall": "prisma generate",
+    "prebuild": "prisma generate",
+    "build": "tsc -p tsconfig.json",
+    "start": "prisma migrate deploy && node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev",
+    "generate": "prisma generate",
+    "seed": "tsx scripts/seed.ts",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/swagger": "8.15.0",
+    "@fastify/swagger-ui": "4.2.0",
+    "@prisma/client": "5.22.0",
+    "fastify": "4.29.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "prisma": "5.22.0",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3"
+  }
+}

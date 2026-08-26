@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Submission {
+  id               String     @id @default(cuid())
+  kind             String
+  body             String
+  docKey           String?
+  version          String?
+  pageStart        Int?
+  pageEnd          Int?
+  contentHash      String?
+  sourceRevision   Int        @default(1)
+  modelProvider    String?
+  modelName        String?
+  generatedAt      DateTime?
+  inputBlockIds    String?
+  coveragePermille Int?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  citations        Citation[]
+
+  @@index([kind, createdAt, id])
+  @@index([docKey, createdAt, id])
+  @@index([createdAt, id])
+}
+
+model Citation {
+  id                String     @id @default(cuid())
+  submissionId      String
+  sourceBlockId     String
+  sourceContentHash String
+  outputStart       Int
+  outputEnd         Int
+  sourceStart       Int?
+  sourceEnd         Int?
+  ordinal           Int
+  submission        Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+  @@index([sourceBlockId])
+}
+
+model Publication {
+  id            String   @id @default(cuid())
+  scope         String
+  revision      Int
+  policyVersion String
+  snapshot      String
+  createdAt     DateTime @default(now())
+
+  @@unique([scope, revision])
+  @@index([scope, createdAt, id])
+  @@index([createdAt, id])
+}
+
+model IdempotencyRecord {
+  key         String   @id
+  requestHash String
+  status      String   @default("PENDING")
+  statusCode  Int
+  body        String
+  createdAt   DateTime @default(now())
+}

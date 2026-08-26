@@ -1,0 +1,95 @@
+// Prisma schema for the summary-disclosure gateway.
+//
+// SQLite is the target database. SQLite does not support native enums, so the
+// submission `kind` is stored as a TEXT column and validated in application
+// code (see src/constants.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// A piece of content submitted to the reading product. The `kind`
+/// discriminator separates original source excerpts from reader notes,
+/// editor summaries and AI-generated summaries.
+model Submission {
+  id            String   @id @default(cuid())
+  kind          String
+  content       String
+  contentHash   String?
+  version       String?
+  page          String?
+  modelProvider String?
+  modelName     String?
+  generatedAt   DateTime?
+  // JSON-encoded array of source-block ids supplied as model input for AI_SUMMARY.
+  inputSourceBlockIds String?
+  revision      Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  citationsOut CitationSpan[] @relation("AiCitationsOut")
+  citedAsSource CitationSpan[] @relation("CitedSource")
+  publications Publication[]
+
+  @@index([kind, createdAt, id])
+  @@index([createdAt, id])
+}
+
+/// A single citation span attached to an AI_SUMMARY. The [startOffset, endOffset)
+/// range is measured in Unicode code points against the AI summary output. The
+/// `citedHash` is the content hash of the referenced source block captured at
+/// citation creation time; publish validates that the source still matches.
+model CitationSpan {
+  id            String   @id @default(cuid())
+  submissionId  String
+  sourceBlockId String
+  startOffset   Int
+  endOffset     Int
+  citedHash     String
+  createdAt     DateTime @default(now())
+
+  submission  Submission @relation("AiCitationsOut", fields: [submissionId], references: [id], onDelete: Cascade)
+  sourceBlock Submission @relation("CitedSource", fields: [sourceBlockId], references: [id])
+
+  @@unique([submissionId, sourceBlockId, startOffset, endOffset])
+  @@index([submissionId])
+  @@index([sourceBlockId])
+}
+
+/// An immutable publication snapshot. Once created, the JSON `snapshot` is the
+/// sole source of truth for the published state; later source-block edits never
+/// mutate it.
+model Publication {
+  id                String   @id @default(cuid())
+  submissionId      String
+  policyVersion     Int
+  revision          Int
+  coveragePermille  Int
+  sourceHashesValid Boolean
+  snapshot          String
+  publishedAt       DateTime @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id])
+
+  // A given submission revision can only be published once. Concurrent publish
+  // attempts race on this constraint and the loser receives 409.
+  @@unique([submissionId, revision])
+  @@index([publishedAt, id])
+}
+
+/// Stores the original response for a create operation keyed by an
+/// Idempotency-Key header + endpoint. Retries replay the stored response.
+model IdempotencyRecord {
+  key        String
+  endpoint   String
+  resourceId String
+  response   String
+  createdAt  DateTime @default(now())
+
+  @@id([key, endpoint])
+}
